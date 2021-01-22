@@ -39,23 +39,34 @@ from pretrainedmodels.models.torchvision_models import pretrained_settings
 import segmentation_models_pytorch as smp
 
 
+from losses import LovaszLossSoftmax
+from losses import LovaszLossHinge
+from losses import dice_coeff
+
+
 label_dic_1 = {"_background_": 0,
-               'br': 1,
-               'na': 2,
-               'ne': 3,
-               'sh': 4,
-               'ru': 5,
-               'hi': 6,
-               're': 7,
-               'rf': 8,
-               'lf': 9,
-               'rb': 10,
-               'lb': 11,
-               'mn': 12,
-               'ey': 13}
+               'br': 1,  # 乳房
+               'na': 2,  # 腹壁
+               'ne': 3,  # 脖子 - 颈部
+               'sh': 4,  # 肩膀
+               'ru': 5,  # 中间大圈
+               'hi': 6,  # 腰
+               're': 7,  # 臀
+               'rf': 8,  # 右前
+               'lf': 9,  # 左前
+               'rb': 10,  # 右后
+               'lb': 11,  # 左后
+               'mn': 12,  # 口鼻
+               'ey': 13}  # 眼睛
+
 label_dic_2 = {"_background_": 0,
                "cow": 1}
-use_labels = ['_background_', 'br', 'na', 'foot', 'mn', 'ey', 'hi', 're']
+
+label_dic_4 = {"_background_": 0,
+               'sh': 1,
+               'ru': 2}
+
+use_labels = ['_background_', 'sh', 'ru']
 
 
 def set_seeds(seed=42):
@@ -90,27 +101,26 @@ class CowDataset(D.Dataset):
 
     def __init__(self):
         self.imgs, self.masks = [], []
-        self.class_num = len(label_dic_1.keys()) - 1
+        self.use_labels = use_labels
+        self.class_num = len(label_dic_4.keys())
         self.load()
 
         self.len = len(self.imgs)
         self.as_tensor = T.Compose([
             SelfTransform(),
             T.ToTensor(),
-            T.Normalize([0.485, 0.456, 0.406], [0.229, 0.224, 0.225]),
+            # T.Normalize([0.485, 0.456, 0.406], [0.229, 0.224, 0.225]),
         ])
 
     def load(self):
-        PATH = '/root/code/test_pytorch/takeoff_maskrcnn/train_bmp'
+
+        PATH = '/root/code/model_data/train_bmp'
         for file in os.listdir(PATH):
-            if '.bmp' not in file:
+            if '.json' not in file:
                 continue
 
-            json_path = os.path.splitext(file)[0] + '.json'
-            if os.path.exists(json_path):
-                continue
-
-            img_path = os.path.join(PATH, file)
+            json_path = os.path.join(PATH, file)
+            img_path = os.path.join(PATH, os.path.splitext(file)[0] + '.bmp')
             img = cv2.imread(img_path)
             self.imgs.append(img)
 
@@ -118,23 +128,22 @@ class CowDataset(D.Dataset):
                 mask_json = json.load(f)
             shapes = []
             for temp in mask_json['shapes']:
-                if temp['label'] == 'whole':
+                if temp['label'] not in self.use_labels:
                     continue
                 shapes.append(temp)
             lbl, _ = utils.shapes_to_label(img.shape,
                                            shapes,
-                                           label_dic_1)
-            LBL = np.zeros((self.class_num, img.shape[0], img.shape[1]), dtype=np.float32)
-            for k, v in label_dic_1.items():
-                if v == 0:
-                    continue
-                where_index = np.where(lbl == v)
-                LBL[v - 1, where_index[0], where_index[1]] = 1
-            self.masks.append(LBL)
+                                           label_dic_4)
+            # LBL = np.zeros((self.class_num, img.shape[0], img.shape[1]), dtype=np.float32)
+            # for i, label in enumerate(self.use_labels):
+            #     v = label_dic_3[label]
+            #     where_index = np.where(lbl == v)
+            #     LBL[i, where_index[0], where_index[1]] = 1
+            self.masks.append(lbl)
 
         return None
 
-        PATH = '/root/code/test_pytorch/takeoff_maskrcnn/train_jpg'
+        PATH = '/root/code/model_data/train_jpg'
         for file in os.listdir(PATH):
             if '.json' not in file:
                 continue
@@ -158,7 +167,7 @@ class CowDataset(D.Dataset):
             # for i in range(self.class_num):
             #     where_index = np.where(lbl == i)
             #     LBL[i, where_index[0], where_index[1]] = 1
-            self.masks.append(lbl.astype(np.float32))
+            self.masks.append(lbl.astype(np.long))
 
     def __getitem__(self, index):
         img, mask = self.imgs[index], self.masks[index]
@@ -169,14 +178,12 @@ class CowDataset(D.Dataset):
 
 
 def train(model, train_loader, loss_fn, optimizer):
-    loss_ = nn.BCELoss()
-    m = nn.Sigmoid()
     losses = []
     for i, (image, target) in enumerate(train_loader):
-        image, target = image.to(DEVICE), target.float().to(DEVICE)
+        image, target = image.to(DEVICE), target.long().to(DEVICE)
         optimizer.zero_grad()
         output = model(image)
-        loss = loss_(m(output), target)
+        loss = loss_fn(output, target)
         loss.backward()
         optimizer.step()
         losses.append(loss.item())
@@ -196,20 +203,15 @@ def np_dice_score(probability, mask):
     return dice
 
 
-def validation(model, val_loader, criterion):
-    threshold = 0.6
-
-    loss_ = nn.BCELoss()
-    m = nn.Sigmoid()
+def validation(model, val_loader, loss_fn):
     loss_l = []
-
     val_probability, val_mask = [], []
     model.eval()
     with torch.no_grad():
-        for image, target in tqdm(val_loader):
-            image, target = image.to(DEVICE), target.float().to(DEVICE)
+        for image, target in val_loader:
+            image, target = image.to(DEVICE), target.long().to(DEVICE)
             output = model(image)
-            loss = loss_(m(output), target)
+            loss = loss_fn(output, target)
             loss_l.append(loss.item())
 
     #         output_ny = output.sigmoid().data.cpu().numpy()
@@ -245,6 +247,8 @@ class SoftDiceLoss(nn.Module):
 bce_fn = nn.BCEWithLogitsLoss()
 # bce_fn = nn.BCELoss()
 dice_fn = SoftDiceLoss()
+cross_loss = nn.CrossEntropyLoss()
+loss_f = LovaszLossSoftmax()
 
 
 def loss_fn(y_pred, y_true, ratio=0.8, hard=False):
@@ -256,7 +260,7 @@ def loss_fn(y_pred, y_true, ratio=0.8, hard=False):
     return ratio * bce + (1 - ratio) * dice
 
 
-EPOCHES = 40
+EPOCHES = 70
 BATCH_SIZE = 8
 NUM_WORKERS = 4
 
@@ -265,56 +269,46 @@ MIN_OVERLAP = 40
 NEW_SIZE = 256
 
 
-class SelfTransform(object):
-
-    def __init__(self):
-        kernel = (5, 5)
-        self.kernel = kernel
-
-    def __call__(self, img):
-        opening = cv2.morphologyEx(img, cv2.MORPH_OPEN, self.kernel)
-        return opening
-
-transform = T.Compose([
-    SelfTransform(),
-    T.ToTensor(),
-    # T.Normalize([0.485, 0.456, 0.406], [0.229, 0.224, 0.225]),
-])
+ds = CowDataset()
+ids = range(len(ds))
+val_ids = random.sample(ids, int(len(ds) * 0.8))
+train_ids = list(set(ids) - set(val_ids))
+train_ds = D.Subset(ds, train_ids)
+train_loader = D.DataLoader(train_ds, batch_size=BATCH_SIZE, shuffle=True, num_workers=NUM_WORKERS)
+valid_ds = D.Subset(ds, val_ids)
+valid_loader = D.DataLoader(valid_ds, batch_size=BATCH_SIZE, shuffle=True, num_workers=NUM_WORKERS)
 
 
 model = smp.Unet(
     encoder_name="efficientnet-b1",        # choose encoder, e.g. mobilenet_v2 or efficientnet-b7
     encoder_weights="imagenet",     # use `imagenet` pretreined weights for encoder initialization
     in_channels=3,                  # model input channels (1 for grayscale images, 3 for RGB, etc.)
-    classes=len(use_labels),                      # model output channels (number of classes in your dataset)
+    classes=len(label_dic_4.keys()),                      # model output channels (number of classes in your dataset)
 )
-model_path = '/root/code/unet_cow_area/unet_best.pth'
-model.load_state_dict(torch.load(model_path))
 model.to(DEVICE)
-model.eval()
+optimizer = torch.optim.AdamW(model.parameters(), lr=1e-3, weight_decay=1e-3)
+lr_step = torch.optim.lr_scheduler.ReduceLROnPlateau(optimizer, factor=0.5, patience=5)
 
-threshold = 0.6
-m = nn.Sigmoid()
-with torch.no_grad():
-    PATH = '/root/code/test_pytorch/takeoff_maskrcnn/train_bmp'
-    for file in tqdm(os.listdir(PATH)):
-        if '.bmp' not in file:
-            continue
+header = r'''
+        Train | Valid
+Epoch |  Loss |  Dice (Best) | Time
+'''
 
-        json_path = os.path.splitext(file)[0] + '.json'
-        if os.path.exists(json_path):
-            continue
+#          Epoch         metrics            time
+raw_line = '{:6d}' + '\u2502{:7.4f}' * 3 + '\u2502{:6.2f}'
 
-        img = cv2.imread(os.path.join(PATH, file))
-        image = transform(img)
-        image = image.to(DEVICE)[None]
-        output = model(image)[0]
-        output = m(output).cpu().numpy()
+best_loss = 10
+for epoch in tqdm(range(EPOCHES)):
+    start_time = time.time()
+    model.train()
+    train_loss = train(model, train_loader, loss_f, optimizer)
+    val_loss = validation(model, valid_loader, loss_f)
+    lr_step.step(val_loss)
 
-        mask = np.zeros((img.shape[0], img.shape[1]), dtype=np.float32)
-        for y in range(mask.shape[0]):
-            for x in range(mask.shape[1]):
-                mask[y, x] = np.argmax(output[:, y, x])
+    print('epoch = %d; train_loss = %f; val_loss = %f' % (epoch, train_loss, val_loss))
 
-        with open(os.path.join(PATH, os.path.splitext(file)[0] + '.npy'), 'wb') as f:
-            np.save(f, mask)
+    if val_loss < best_loss:
+        best_loss = val_loss
+        torch.save(model.state_dict(), '/root/code/model_state/unet_area2_best_0122.pth')
+
+    # logging.info(raw_line.format(epoch, train_loss, val_dice, best_dice, (time.time() - start_time) / 60**1))
