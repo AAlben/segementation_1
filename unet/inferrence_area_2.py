@@ -55,7 +55,7 @@ label_dic_1 = {"_background_": 0,
                'ey': 13}
 label_dic_2 = {"_background_": 0,
                "cow": 1}
-use_labels = ['_background_', 'sh', 'ru']
+use_labels = ['_background_', 'sh', 'ru', 'ne']
 
 
 def set_seeds(seed=42):
@@ -97,7 +97,7 @@ class CowDataset(D.Dataset):
         self.as_tensor = T.Compose([
             SelfTransform(),
             T.ToTensor(),
-            T.Normalize([0.485, 0.456, 0.406], [0.229, 0.224, 0.225]),
+            # T.Normalize([0.485, 0.456, 0.406], [0.229, 0.224, 0.225]),
         ])
 
     def load(self):
@@ -288,7 +288,7 @@ model = smp.Unet(
     in_channels=3,                  # model input channels (1 for grayscale images, 3 for RGB, etc.)
     classes=len(use_labels),                      # model output channels (number of classes in your dataset)
 )
-model_path = '/root/code/model_state/unet_area2_best_0122.pth'
+model_path = '/root/code/model_state/unet_area2_best_0125.pth'
 model.load_state_dict(torch.load(model_path))
 model.to(DEVICE)
 model.eval()

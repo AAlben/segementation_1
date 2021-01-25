@@ -66,7 +66,7 @@ label_dic_4 = {"_background_": 0,
                'sh': 1,
                'ru': 2}
 
-use_labels = ['_background_', 'sh', 'ru']
+use_labels = ['_background_', 'sh', 'ru', 'ne']
 
 
 def set_seeds(seed=42):
@@ -309,6 +309,6 @@ for epoch in tqdm(range(EPOCHES)):
 
     if val_loss < best_loss:
         best_loss = val_loss
-        torch.save(model.state_dict(), '/root/code/model_state/unet_area2_best_0122.pth')
+        torch.save(model.state_dict(), '/root/code/model_state/unet_area2_best_0125.pth')
 
     # logging.info(raw_line.format(epoch, train_loss, val_dice, best_dice, (time.time() - start_time) / 60**1))
