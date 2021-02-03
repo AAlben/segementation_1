@@ -288,7 +288,7 @@ model = smp.Unet(
     in_channels=3,                  # model input channels (1 for grayscale images, 3 for RGB, etc.)
     classes=len(use_labels),                      # model output channels (number of classes in your dataset)
 )
-model_path = '/root/code/unet_cow_area/unet_best.pth'
+model_path = '/root/code/model_state/unet_best_0121.pth'
 model.load_state_dict(torch.load(model_path))
 model.to(DEVICE)
 model.eval()
@@ -296,9 +296,9 @@ model.eval()
 threshold = 0.6
 m = nn.Sigmoid()
 with torch.no_grad():
-    PATH = '/root/code/test_pytorch/takeoff_maskrcnn/train_bmp'
+    PATH = '/root/code/temp'
     for file in tqdm(os.listdir(PATH)):
-        if '.bmp' not in file:
+        if '.bmp' not in file and '.jpg' not in file:
             continue
 
         json_path = os.path.splitext(file)[0] + '.json'
@@ -316,5 +316,6 @@ with torch.no_grad():
             for x in range(mask.shape[1]):
                 mask[y, x] = np.argmax(output[:, y, x])
 
-        with open(os.path.join(PATH, os.path.splitext(file)[0] + '.npy'), 'wb') as f:
+        inferrence_path = '/root/code/inferrence_data/area_1'
+        with open(os.path.join(inferrence_path, os.path.splitext(file)[0] + '.npy'), 'wb') as f:
             np.save(f, mask)

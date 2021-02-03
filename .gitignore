@@ -129,3 +129,4 @@ dmypy.json
 .pyre/
 
 compare/
+faster_rcnn/official/PennFudanPed/

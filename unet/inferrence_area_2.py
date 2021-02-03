@@ -55,7 +55,7 @@ label_dic_1 = {"_background_": 0,
                'ey': 13}
 label_dic_2 = {"_background_": 0,
                "cow": 1}
-use_labels = ['_background_', 'sh', 'ru', 'ne']
+use_labels = ['_background_', 'sh', 'ru']
 
 
 def set_seeds(seed=42):
@@ -288,7 +288,7 @@ model = smp.Unet(
     in_channels=3,                  # model input channels (1 for grayscale images, 3 for RGB, etc.)
     classes=len(use_labels),                      # model output channels (number of classes in your dataset)
 )
-model_path = '/root/code/model_state/unet_area2_best_0125.pth'
+model_path = '/root/code/model_state/unet_area2_best_0122.pth'
 model.load_state_dict(torch.load(model_path))
 model.to(DEVICE)
 model.eval()
@@ -296,10 +296,10 @@ model.eval()
 threshold = 0.6
 m = nn.Sigmoid()
 with torch.no_grad():
-    PATH = '/root/code/model_data/train_bmp'
+    PATH = '/root/code/temp'
 
     for file in tqdm(os.listdir(PATH)):
-        if '.bmp' not in file:
+        if '.bmp' not in file and '.jpg' not in file:
             continue
 
         json_path = os.path.splitext(file)[0] + '.json'

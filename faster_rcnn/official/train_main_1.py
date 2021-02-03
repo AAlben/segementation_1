@@ -1,6 +1,10 @@
 import os
+import cv2
+import json
 import numpy as np
 from PIL import Image
+from tqdm import tqdm
+from labelme import utils as labelme_utils
 
 import torch
 import torchvision
@@ -88,7 +92,7 @@ class CowDataset(object):
         self.load()
 
     def load(self):
-        PATH = '/root/code/test_pytorch/takeoff_maskrcnn/train_bmp'
+        PATH = '/root/code/model_data/train_bmp'
         for file in os.listdir(PATH):
             if '.json' not in file:
                 continue
@@ -100,7 +104,7 @@ class CowDataset(object):
             self.imgs.append(img_path)
             self.masks.append(json_path)
 
-        PATH = '/root/code/test_pytorch/takeoff_maskrcnn/train_jpg'
+        PATH = '/root/code/model_data/train_jpg'
         for file in os.listdir(PATH):
             if '.json' not in file:
                 continue
@@ -129,6 +133,7 @@ class CowDataset(object):
                 if mask['label'] != 'whole':
                     continue
                 mask_shapes.append([mask])
+                break
             label_name_to_value = {"_background_": 0, 'whole': 1}
 
         num_objs = 1
@@ -159,9 +164,17 @@ class CowDataset(object):
         target = {}
         target["boxes"] = boxes
         target["labels"] = labels
+        target["image_id"] = image_id
+        target["area"] = area
+        target["iscrowd"] = iscrowd
 
         if self.transforms is not None:
             img, target = self.transforms(img, target)
+
+        # print('-' * 100)
+        # print(img.shape)
+        # print(target)
+        # print('-' * 100)
 
         return img, target
 
@@ -185,45 +198,14 @@ def get_transform():
     return T.Compose(transforms)
 
 
-dataset = CowDataset(get_transform())
-indices = torch.randperm(len(dataset)).tolist()
-split_index = int(len(dataset) * 0.8)
-dataset_train = torch.utils.data.Subset(dataset, indices[:split_index])
-dataset_test = torch.utils.data.Subset(dataset, indices[split_index:])
-
-data_loader = torch.utils.data.DataLoader(dataset_train,
-                                          batch_size=8,
-                                          shuffle=True,
-                                          num_workers=4,
-                                          collate_fn=utils.collate_fn)
-
-data_loader_test = torch.utils.data.DataLoader(dataset_test,
-                                               batch_size=1,
-                                               shuffle=False,
-                                               num_workers=4,
-                                               collate_fn=utils.collate_fn)
-
-
 '''
 TEST forward & predict
 '''
 # For Training
-images, targets = next(iter(data_loader))
-images = list(image for image in images)
-targets = [{k: v for k, v in t.items()} for t in targets]
-
-print(images)
-print(images[0].shape)
-print(targets)
-
-
-output = model(images, targets)   # Returns losses and detections
-# For inference
-model.eval()
-x = [torch.rand(3, 300, 400), torch.rand(3, 500, 400)]
-predictions = model(x)           # Returns predictions
-print(predictions)
-raise Exception('', '')
+# images, targets = next(iter(data_loader))
+# images = list(image for image in images)
+# targets = [{k: v for k, v in t.items()} for t in targets]
+# output = model(images, targets)   # Returns losses and detections
 
 
 def main(model):
@@ -233,17 +215,15 @@ def main(model):
     # our dataset has two classes only - background and person
     num_classes = 2
     # use our dataset and defined transformations
-    dataset = PennFudanDataset('PennFudanPed', get_transform(train=True))
-    dataset_test = PennFudanDataset('PennFudanPed', get_transform(train=False))
 
-    # split the dataset in train and test set
+    dataset = CowDataset(get_transform())
     indices = torch.randperm(len(dataset)).tolist()
-    dataset = torch.utils.data.Subset(dataset, indices[:-50])
-    dataset_test = torch.utils.data.Subset(dataset_test, indices[-50:])
+    split_index = int(len(dataset) * 0.8)
+    dataset_train = torch.utils.data.Subset(dataset, indices[:split_index])
+    dataset_test = torch.utils.data.Subset(dataset, indices[split_index:])
 
-    # define training and validation data loaders
-    data_loader = torch.utils.data.DataLoader(dataset,
-                                              batch_size=2,
+    data_loader = torch.utils.data.DataLoader(dataset_train,
+                                              batch_size=8,
                                               shuffle=True,
                                               num_workers=4,
                                               collate_fn=utils.collate_fn)
@@ -269,7 +249,7 @@ def main(model):
                                                    gamma=0.1)
 
     # let's train it for 10 epochs
-    num_epochs = 10
+    num_epochs = 20
 
     for epoch in range(num_epochs):
         # train for one epoch, printing every 10 iterations
@@ -278,6 +258,7 @@ def main(model):
         lr_scheduler.step()
         # evaluate on the test dataset
         evaluate(model, data_loader_test, device=device)
+        torch.save(model.state_dict(), '/root/code/model_state/faster_rcnn_%d.pth' % epoch)
 
     print("That's it!")
 

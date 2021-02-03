@@ -118,9 +118,9 @@ x = [torch.rand(3, 300, 400), torch.rand(3, 500, 400)]
 predictions = model(x)           # Returns predictions
 
 
-def main():
+def main(model):
     # train on the GPU or on the CPU, if a GPU is not available
-    device = torch.device('cuda') if torch.cuda.is_available() else torch.device('cpu')
+    device = torch.device('cuda:0') if torch.cuda.is_available() else torch.device('cpu')
 
     # our dataset has two classes only - background and person
     num_classes = 2
@@ -145,9 +145,6 @@ def main():
                                                    shuffle=False,
                                                    num_workers=4,
                                                    collate_fn=utils.collate_fn)
-
-    # get the model using our helper function
-    model = get_model_instance_segmentation(num_classes)
 
     # move model to the right device
     model.to(device)
@@ -175,3 +172,6 @@ def main():
         evaluate(model, data_loader_test, device=device)
 
     print("That's it!")
+
+
+main(model)

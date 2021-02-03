@@ -64,7 +64,8 @@ label_dic_2 = {"_background_": 0,
 
 label_dic_4 = {"_background_": 0,
                'sh': 1,
-               'ru': 2}
+               'ru': 2,
+               'ne': 3}
 
 use_labels = ['_background_', 'sh', 'ru', 'ne']
 
