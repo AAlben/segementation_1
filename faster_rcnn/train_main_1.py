@@ -1,11 +1,15 @@
 import os
+import cv2
+import json
 import numpy as np
 import pandas as pd
 from tqdm import tqdm
 from labelme import utils as labelme_utils
 
 import torch
+import torch.nn.functional as F
 import torchvision
+import torchvision.transforms as T
 from torchvision.models.detection.faster_rcnn import FastRCNNPredictor
 
 import warnings
@@ -39,8 +43,8 @@ class CowDataset(torch.utils.data.Dataset):
         PATHS = ['/root/code/model_data/train_bmp',
                  '/root/code/model_data/train_jpg']
 
-        for path in PATHS:
-            for file in os.listdir(path):
+        for PATH in PATHS:
+            for file in os.listdir(PATH):
                 if '.json' not in file:
                     continue
                 json_path = os.path.join(PATH, file)
@@ -81,13 +85,14 @@ class CowDataset(torch.utils.data.Dataset):
         ymin = np.min(nonzero_idx[0])
         ymax = np.max(nonzero_idx[0])
         boxes.append([xmin, ymin, xmax, ymax])
+        boxes = np.asarray(boxes)
         labels = np.ones(len(boxes))
 
         targets = {}
-        targets['boxes'] = torch.from_numpy(boxes).double()
+        targets['boxes'] = torch.from_numpy(boxes)
         targets['labels'] = torch.from_numpy(labels).type(torch.int64)
         img = self.transforms(img)
-        return img.double(), targets
+        return img, targets
 
     def __len__(self):
         return len(self.imgs)
@@ -100,10 +105,12 @@ split_index = int(len(dataset) * 0.8)
 dataset_train = torch.utils.data.Subset(dataset, indices[:split_index])
 dataset_test = torch.utils.data.Subset(dataset, indices[split_index:])
 data_loader_train = torch.utils.data.DataLoader(dataset_train,
+                                                num_workers=4,
                                                 batch_size=4,
                                                 shuffle=True,
                                                 collate_fn=lambda x: list(zip(*x)))
 data_loader_test = torch.utils.data.DataLoader(dataset_test,
+                                               num_workers=4,
                                                batch_size=2,
                                                shuffle=False,
                                                collate_fn=lambda x: list(zip(*x)))
@@ -118,23 +125,34 @@ model = model.to(device)
 
 
 params = [p for p in model.parameters() if p.requires_grad]
-optimizer = torch.optim.SGD(params, lr=0.01)
+optimizer = torch.optim.SGD(params, lr=0.005)
 
-EPOCHS = 20
+EPOCHS = 60
 now_loss = 10
-model.train()
 for epoch in tqdm(range(EPOCHS)):
-    for images, targets in tqdm(data_loader_train):
+    model.train()
+    for images, targets in data_loader_train:
         images = list(image.to(device) for image in images)
         targets = [{k: v.to(device) for k, v in t.items()} for t in targets]
-        model = model.double()
         loss_dict = model(images, targets)
         losses = sum(loss for loss in loss_dict.values())
-        losses.backward()
         optimizer.zero_grad()
+        losses.backward()
         optimizer.step()
 
-    if losses.item() < now_loss:
-        now_loss = losses.item()
+    model.eval()
+    losses = []
+    with torch.no_grad():
+        for image, target in data_loader_test:
+            images = list(image.to(device) for image in images)
+            targets = [{k: v.to(device) for k, v in t.items()} for t in targets]
+            output = model(images, targets)
+
+            for i, item in enumerate(output):
+                losses.append(F.smooth_l1_loss(item['boxes'][0], targets[i]['boxes']).cpu())
+
+    loss_ = np.mean(losses)
+    if loss_ < now_loss:
+        now_loss = loss_
         torch.save(model.state_dict(), '/root/code/model_state/faster_rcnn_kaggle.pth')
-    print("Loss = {:.4f} ".format(losses.item()))
+    print("Loss = {:.4f} ".format(loss_))
