@@ -2,18 +2,24 @@ import os
 import cv2
 import json
 import numpy as np
-from tqdm import tqdm
+from PIL import Image
+from random import shuffle
+from collections import OrderedDict
 from labelme import utils as labelme_utils
 
 import torch
+import torch.utils.data
 import torchvision
-from torchvision import transforms as TT
 from torchvision.models.detection.faster_rcnn import FastRCNNPredictor
-from torchvision.models.detection.mask_rcnn import MaskRCNNPredictor
+from torchvision.models.detection.mask_rcnn import MaskRCNNPredictor, MaskRCNN
+from torchvision.ops.feature_pyramid_network import FeaturePyramidNetwork, LastLevelMaxPool
 
 import utils
 import transforms as T
 from engine import train_one_epoch, evaluate
+
+
+torch.manual_seed(1)
 
 
 class CowDataset(object):
@@ -110,29 +116,83 @@ class CowDataset(object):
         return len(self.imgs)
 
 
-def get_model_instance_segmentation(num_classes):
-    # load an instance segmentation model pre-trained pre-trained on COCO
-    model = torchvision.models.detection.maskrcnn_resnet50_fpn(pretrained=True)
-
-    # get number of input features for the classifier
-    in_features = model.roi_heads.box_predictor.cls_score.in_features
-    # replace the pre-trained head with a new one
-    model.roi_heads.box_predictor = FastRCNNPredictor(in_features, num_classes)
-
-    # now get the number of input features for the mask classifier
-    in_features_mask = model.roi_heads.mask_predictor.conv5_mask.in_channels
-    hidden_layer = 256
-    # and replace the mask predictor with a new one
-    model.roi_heads.mask_predictor = MaskRCNNPredictor(in_features_mask,
-                                                       hidden_layer,
-                                                       num_classes)
-    return model
-
-
 def get_transform():
     transforms = []
     transforms.append(T.ToTensor())
     return T.Compose(transforms)
+
+
+class backbone_body(torch.nn.ModuleDict):
+
+    def __init__(self, layers, return_layers):
+        super().__init__(layers)
+        self.return_layers = return_layers
+
+    def forward(self, x):
+        out = OrderedDict()
+        for name, module in self.named_children():
+            x = module(x)
+            if name in self.return_layers:
+                out_name = self.return_layers[name]
+                out[out_name] = x
+        return out
+
+
+class BackboneFPN(torch.nn.Sequential):
+
+    def __init__(self, body, fpn, out_channels):
+        d = OrderedDict([("body", body),
+                         ("fpn", fpn)])
+        super(BackboneFPN, self).__init__(d)
+        self.out_channels = out_channels
+
+
+def maskrcnn_resnet18_fpn(num_classes):
+    src_backbone = torchvision.models.resnet18(pretrained=True)
+    # 去掉后面的全连接层
+    return_layers = {'layer1': 0,
+                     'layer2': 1,
+                     'layer3': 2,
+                     'layer4': 3}
+    names = [name for name, _ in src_backbone.named_children()]
+    # just 验证，失败则报异常
+    if not set(return_layers).issubset(names):
+        raise ValueError("return_layers are not present in model")
+
+    orig_return_layers = return_layers
+    # 复制一份到 layers
+    return_layers = {k: v for k, v in return_layers.items()}
+    layers = OrderedDict()
+    for name, module in src_backbone.named_children():
+        layers[name] = module
+        if name in return_layers:
+            del return_layers[name]
+        if not return_layers:
+            break
+
+    # 得到去掉池化、全连接层的模型
+    backbone_module = backbone_body(layers, orig_return_layers)
+
+    # FPN层，resnet18 layer4 chanels为 512，fpn顶层512/8
+    in_channels_stage2 = 64
+    in_channels_list = [
+        in_channels_stage2,
+        in_channels_stage2 * 2,
+        in_channels_stage2 * 4,
+        in_channels_stage2 * 8,
+    ]
+    out_channels = 64
+
+    fpn = FeaturePyramidNetwork(
+        in_channels_list=in_channels_list,
+        out_channels=out_channels,
+        extra_blocks=LastLevelMaxPool(),
+    )
+    backbone_fpn = BackboneFPN(backbone_module,
+                               fpn,
+                               out_channels)
+    model = MaskRCNN(backbone_fpn, num_classes)
+    return model
 
 
 device = torch.device('cuda:0') if torch.cuda.is_available() else torch.device('cpu')
@@ -148,26 +208,26 @@ data_loader = torch.utils.data.DataLoader(dataset,
                                           shuffle=True,
                                           num_workers=4,
                                           collate_fn=utils.collate_fn)
-
 data_loader_test = torch.utils.data.DataLoader(dataset_test,
                                                batch_size=1,
                                                shuffle=False,
                                                num_workers=4,
                                                collate_fn=utils.collate_fn)
 
-model = get_model_instance_segmentation(num_classes)
+
+model = maskrcnn_resnet18_fpn(num_classes)
 model.to(device)
+
 params = [p for p in model.parameters() if p.requires_grad]
 optimizer = torch.optim.SGD(params,
                             lr=0.001,
                             momentum=0.9,
                             weight_decay=0.0005)
 lr_scheduler = torch.optim.lr_scheduler.StepLR(optimizer,
-                                               step_size=20,
-                                               gamma=0.1)
+                                               step_size=30,
+                                               gamma=0.5)
 
-
-num_epochs = 60
+num_epochs = 100
 try:
     for epoch in range(num_epochs):
         # train for one epoch, printing every 10 iterations
@@ -177,7 +237,7 @@ try:
         # evaluate on the test dataset
         evaluate(model, data_loader_test, device=device)
 except KeyboardInterrupt:
-    torch.save(model.state_dict(), '/root/code/model_state/mask_rcnn_0222_1.pth')
+    torch.save(model.state_dict(), '/root/code/model_state/mask_rcnn_0222_2.pth')
 except Exception as e:
     raise
-torch.save(model.state_dict(), '/root/code/model_state/mask_rcnn_0222_1.pth')
+torch.save(model.state_dict(), '/root/code/model_state/mask_rcnn_0222_2.pth')

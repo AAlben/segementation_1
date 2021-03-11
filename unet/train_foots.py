@@ -45,10 +45,7 @@ from losses import dice_coeff
 
 
 label_dic = {"_background_": 0,
-             'lf': 1,
-             'rf': 2,
-             'lb': 3,
-             'rb': 4, }
+             'foot': 1}
 use_labels = ['_background_', 'lf', 'rf', 'lb', 'rb']
 
 
@@ -87,7 +84,7 @@ class CowDataset(D.Dataset):
     def __init__(self):
         self.imgs, self.masks = [], []
         self.use_labels = use_labels
-        self.class_num = len(label_dic_4.keys())
+        self.class_num = CLASSES
         self.load()
 
         self.len = len(self.imgs)
@@ -118,7 +115,7 @@ class CowDataset(D.Dataset):
                 shapes.append(temp)
             lbl, _ = utils.shapes_to_label(img.shape,
                                            shapes,
-                                           label_dic_4)
+                                           label_dic)
             self.masks.append(lbl)
 
         return None
