@@ -46,6 +46,9 @@ label_dic = {"_background_": 0,
 
 use_labels = ['_background_', 'br']
 
+label_lunkuo = {"_background_": 0,
+                'whole': 1}
+
 
 def set_seeds(seed=42):
     random.seed(seed)
@@ -90,7 +93,7 @@ class Farm31Dataset(D.Dataset):
         ])
 
     def load(self):
-        PATH = '/data/data/train_bmp'
+        PATH = '/root/code/model_data/train_bmp'
         for file in os.listdir(PATH):
             if '.json' not in file:
                 continue
@@ -101,6 +104,19 @@ class Farm31Dataset(D.Dataset):
 
             with open(json_path, 'rb') as f:
                 mask_json = json.load(f)
+
+            shapes = []
+            for temp in mask_json['shapes']:
+                if temp['label'] == 'whole':
+                    shapes.append(temp)
+                    break
+            lbl, _ = utils.shapes_to_label(img.shape,
+                                           shapes,
+                                           label_lunkuo)
+            where = np.where(lbl == 1)
+            img_mask = np.zeros(img.shape, dtype=np.uint8)
+            img_mask[where[0], where[1], :] = img[where[0], where[1], :]
+
             shapes = []
             for temp in mask_json['shapes']:
                 if temp['label'] not in self.use_labels:
@@ -112,7 +128,7 @@ class Farm31Dataset(D.Dataset):
                                            shapes,
                                            label_dic)
             self.masks.append(lbl)
-            self.imgs.append(img)
+            self.imgs.append(img_mask)
 
     def __getitem__(self, index):
         img, mask = self.imgs[index], self.masks[index]
@@ -140,7 +156,7 @@ class Farm24Dataset(D.Dataset):
         ])
 
     def load(self):
-        PATH = '/data/data/train_bmp'
+        PATH = '/root/code/model_datatrain_bmp'
         for file in os.listdir(PATH):
             if '.json' not in file:
                 continue
@@ -171,7 +187,7 @@ class Farm24Dataset(D.Dataset):
             self.imgs.append(img)
             self.masks.append(lbl)
 
-        PATH = '/data/data/farm_24'
+        PATH = '/root/code/model_datafarm_24'
         for file in os.listdir(PATH):
             if '.json' not in file:
                 continue
@@ -231,8 +247,8 @@ def validation(model, val_loader, loss_fn):
 
 loss_f = LovaszLossSoftmax()
 
-EPOCHES = 100
-BATCH_SIZE = 2
+EPOCHES = 70
+BATCH_SIZE = 3
 NUM_WORKERS = 0
 
 ds_1 = Farm31Dataset()
@@ -253,7 +269,7 @@ model = smp.Unet(
 )
 model.to(DEVICE)
 optimizer = torch.optim.AdamW(model.parameters(), lr=1e-3, weight_decay=1e-3)
-lr_step = torch.optim.lr_scheduler.ReduceLROnPlateau(optimizer, factor=0.5, patience=5)
+lr_step = torch.optim.lr_scheduler.ReduceLROnPlateau(optimizer, factor=0.3, patience=5)
 
 best_loss = 10
 for epoch in tqdm(range(EPOCHES)):
@@ -267,29 +283,29 @@ for epoch in tqdm(range(EPOCHES)):
 
     if val_loss < best_loss:
         best_loss = val_loss
-        torch.save(model.state_dict(), '/data/model_state/unet_br_0311_1.pth')
+        torch.save(model.state_dict(), '/root/code/model_state/unet_br_0311_2.pth')
 
 
-ds_2 = Farm24Dataset()
-ds = ds_2
-ids = range(len(ds))
-val_ids = random.sample(ids, int(len(ds) * 0.8))
-train_ids = list(set(ids) - set(val_ids))
-train_ds = D.Subset(ds, train_ids)
-train_loader = D.DataLoader(train_ds, batch_size=BATCH_SIZE, shuffle=False, num_workers=NUM_WORKERS)
-valid_ds = D.Subset(ds, val_ids)
-valid_loader = D.DataLoader(valid_ds, batch_size=BATCH_SIZE, shuffle=False, num_workers=NUM_WORKERS)
+# ds_2 = Farm24Dataset()
+# ds = ds_2
+# ids = range(len(ds))
+# val_ids = random.sample(ids, int(len(ds) * 0.8))
+# train_ids = list(set(ids) - set(val_ids))
+# train_ds = D.Subset(ds, train_ids)
+# train_loader = D.DataLoader(train_ds, batch_size=BATCH_SIZE, shuffle=False, num_workers=NUM_WORKERS)
+# valid_ds = D.Subset(ds, val_ids)
+# valid_loader = D.DataLoader(valid_ds, batch_size=BATCH_SIZE, shuffle=False, num_workers=NUM_WORKERS)
 
-best_loss = 10
-for epoch in tqdm(range(EPOCHES)):
-    start_time = time.time()
-    model.train()
-    train_loss = train(model, train_loader, loss_f, optimizer)
-    val_loss = validation(model, valid_loader, loss_f)
-    lr_step.step(val_loss)
+# best_loss = 10
+# for epoch in tqdm(range(EPOCHES)):
+#     start_time = time.time()
+#     model.train()
+#     train_loss = train(model, train_loader, loss_f, optimizer)
+#     val_loss = validation(model, valid_loader, loss_f)
+#     lr_step.step(val_loss)
 
-    print('epoch = %d; train_loss = %f; val_loss = %f' % (epoch, train_loss, val_loss))
+#     print('epoch = %d; train_loss = %f; val_loss = %f' % (epoch, train_loss, val_loss))
 
-    if val_loss < best_loss:
-        best_loss = val_loss
-        torch.save(model.state_dict(), '/data/model_state/unet_br_0311_2.pth')
+#     if val_loss < best_loss:
+#         best_loss = val_loss
+#         torch.save(model.state_dict(), '/root/code/model_state/unet_br_0311_2.pth')
