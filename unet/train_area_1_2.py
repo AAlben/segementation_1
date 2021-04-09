@@ -1,6 +1,9 @@
 import warnings
 warnings.filterwarnings('ignore')
 
+from loguru import logger
+logger.add('mask_rcnn.log', rotation='100 MB')
+
 import os
 import cv2
 import json
@@ -11,16 +14,9 @@ from tqdm import tqdm
 from labelme import utils
 
 import torch
-import torch.nn as nn
 import torch.utils.data as D
-import torch.nn.functional as F
-import torch.utils.model_zoo as model_zoo
 import torchvision
 from torchvision import transforms as T
-from torchvision.models.resnet import ResNet
-from torchvision.models.resnet import BasicBlock
-from torchvision.models.resnet import Bottleneck
-
 import albumentations as A
 import segmentation_models_pytorch as smp
 
@@ -87,6 +83,9 @@ class SelfTransform(object):
 class Farm31Dataset(D.Dataset):
 
     def __init__(self):
+        self.resize_transform = A.Compose([
+            A.LongestMaxSize(max_size=640)
+        ])
         self.imgs, self.masks = [], []
         self.use_labels = use_labels
         self.class_num = len(label_dic_4.keys())
@@ -124,6 +123,41 @@ class Farm31Dataset(D.Dataset):
                                            label_dic_4)
             if not shapes:
                 continue
+
+            self.imgs.append(img)
+            self.masks.append(lbl)
+
+        PATH = '/data/data/farm_24'
+        for file in os.listdir(PATH):
+            if '.json' not in file:
+                continue
+
+            json_path = os.path.join(PATH, file)
+            img_path = os.path.join(PATH, os.path.splitext(file)[0] + '.bmp')
+            img = cv2.imread(img_path)
+
+            with open(json_path, 'rb') as f:
+                mask_json = json.load(f)
+            foot, shapes = [], []
+            for temp in mask_json['shapes']:
+                if temp['label'] not in use_labels:
+                    continue
+                if temp['label'] in ['lf', 'rf', 'lb', 'rb']:
+                    temp['label'] = 'foot'
+                    shapes.append(temp)
+                    continue
+                shapes.append(temp)
+            lbl, _ = utils.shapes_to_label(img.shape,
+                                           shapes,
+                                           label_dic_4)
+            if not shapes:
+                continue
+
+            img_resize = self.resize_transform(image=img)
+            img = img_resize['image']
+            lbl = lbl.astype(np.uint8)
+            lbl_resize = self.resize_transform(image=lbl)
+            lbl = lbl_resize['image']
 
             self.imgs.append(img)
             self.masks.append(lbl)
@@ -225,6 +259,7 @@ class Farm24Dataset(D.Dataset):
 
 def train(model, train_loader, loss_fn, optimizer):
     losses = []
+    model.train()
     for i, (image, target) in enumerate(train_loader):
         image, target = image.to(DEVICE), target.long().to(DEVICE)
         optimizer.zero_grad()
@@ -238,7 +273,6 @@ def train(model, train_loader, loss_fn, optimizer):
 
 def validation(model, val_loader, loss_fn):
     loss_l = []
-    val_probability, val_mask = [], []
     model.eval()
     with torch.no_grad():
         for image, target in val_loader:
@@ -254,11 +288,12 @@ loss_f = LovaszLossSoftmax()
 
 EPOCHES = 100
 BATCH_SIZE = 5
-NUM_WORKERS = 0
+NUM_WORKERS = 4
 
 ds_1 = Farm31Dataset()
-ds_2 = Farm24Dataset()
-ds = ConcatDataset([ds_1, ds_2])
+# ds_2 = Farm24Dataset()
+# ds = ConcatDataset([ds_1, ds_2])
+ds = ds_1
 ids = range(len(ds))
 val_ids = random.sample(ids, int(len(ds) * 0.8))
 train_ids = list(set(ids) - set(val_ids))
@@ -269,7 +304,7 @@ valid_loader = D.DataLoader(valid_ds, batch_size=BATCH_SIZE, shuffle=True, num_w
 
 
 model = smp.Unet(
-    encoder_name="efficientnet-b1",        # choose encoder, e.g. mobilenet_v2 or efficientnet-b7
+    encoder_name="efficientnet-b5",        # choose encoder, e.g. mobilenet_v2 or efficientnet-b7
     encoder_weights="imagenet",     # use `imagenet` pretreined weights for encoder initialization
     in_channels=3,                  # model input channels (1 for grayscale images, 3 for RGB, etc.)
     classes=len(label_dic_4.keys()),                      # model output channels (number of classes in your dataset)
@@ -278,16 +313,13 @@ model.to(DEVICE)
 optimizer = torch.optim.AdamW(model.parameters(), lr=1e-3, weight_decay=1e-3)
 lr_step = torch.optim.lr_scheduler.ReduceLROnPlateau(optimizer, factor=0.5, patience=5)
 
-
-best_loss = 10
 for epoch in tqdm(range(EPOCHES)):
-    model.train()
     train_loss = train(model, train_loader, loss_f, optimizer)
     val_loss = validation(model, valid_loader, loss_f)
     lr_step.step(val_loss)
 
-    print('epoch = %d; train_loss = %f; val_loss = %f' % (epoch, train_loss, val_loss))
+    content = f'epoch = {epoch}; train_loss = {train_loss}; val_loss = {val_loss}'
+    print(content)
+    logger.info(content)
 
-    if val_loss < best_loss:
-        best_loss = val_loss
-        torch.save(model.state_dict(), '/data/model_state/unet_area_1_0312.pth')
+    torch.save(model.state_dict(), '/root/code/model_state/unet/unet_area_1_0409_%d.pth' % epoch)
