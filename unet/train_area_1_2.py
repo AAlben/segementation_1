@@ -98,7 +98,7 @@ class Farm31Dataset(D.Dataset):
         ])
 
     def load(self):
-        PATH = '/data/data/train_bmp'
+        PATH = '/root/code/model_data/train_bmp'
         for file in os.listdir(PATH):
             if '.json' not in file:
                 continue
@@ -127,7 +127,7 @@ class Farm31Dataset(D.Dataset):
             self.imgs.append(img)
             self.masks.append(lbl)
 
-        PATH = '/data/data/farm_24'
+        PATH = '/root/code/model_data/farm_24'
         for file in os.listdir(PATH):
             if '.json' not in file:
                 continue
@@ -187,7 +187,7 @@ class Farm24Dataset(D.Dataset):
         ])
 
     def load(self):
-        PATH = '/data/data/train_bmp'
+        PATH = '/root/code/model_data/train_bmp'
         for file in os.listdir(PATH):
             if '.json' not in file:
                 continue
@@ -220,7 +220,7 @@ class Farm24Dataset(D.Dataset):
             self.imgs.append(img)
             self.masks.append(lbl)
 
-        PATH = '/data/data/farm_24'
+        PATH = '/root/code/model_data/farm_24'
         for file in os.listdir(PATH):
             if '.json' not in file:
                 continue
