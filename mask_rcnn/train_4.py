@@ -6,6 +6,9 @@
  - 4）train_4.py - 多牛场训练版本
 '''
 
+from loguru import logger
+logger.add('mask_rcnn.log', rotation='100 MB')
+
 import os
 import cv2
 import json
@@ -29,16 +32,16 @@ class Farm31Dataset(object):
 
     def __init__(self, transforms):
         self.resize_transform = A.Compose([
-            A.SmallestMaxSize(max_size=384)
+            A.LongestMaxSize(max_size=640)
         ])
         self.transforms = transforms
         self.imgs, self.masks = [], []
         self.load()
 
     def load(self):
-        PATHS = ['/data/data/train_bmp',
-                 '/data/data/train_jpg',
-                 '/data/data/farm_24']
+        PATHS = ['/root/code/model_data/train_bmp',
+                 '/root/code/model_data/train_jpg',
+                 '/root/code/model_data/farm_24']
         for PATH in PATHS:
             for file in os.listdir(PATH):
                 if '.json' not in file:
@@ -141,8 +144,8 @@ class Farm24Dataset(object):
         self.load()
 
     def load(self):
-        PATHS = ['/data/data/train_bmp',
-                 '/data/data/train_jpg']
+        PATHS = ['/root/code/model_data/train_bmp',
+                 '/root/code/model_data/train_jpg']
 
         for PATH in PATHS:
             for file in os.listdir(PATH):
@@ -263,16 +266,19 @@ split_index = int(len(dataset_31) * 0.8)
 dataset = torch.utils.data.Subset(dataset_31, indices[:split_index])
 dataset_test = torch.utils.data.Subset(dataset_31, indices[split_index:])
 data_loader = torch.utils.data.DataLoader(dataset,
-                                          batch_size=3,
+                                          batch_size=5,
                                           shuffle=True,
                                           num_workers=4,
                                           collate_fn=utils.collate_fn)
 data_loader_test = torch.utils.data.DataLoader(dataset_test,
-                                               batch_size=1,
+                                               batch_size=5,
                                                shuffle=False,
                                                num_workers=4,
                                                collate_fn=utils.collate_fn)
 
+
+device = torch.device('cuda:0') if torch.cuda.is_available() else torch.device('cpu')
+num_classes = 2
 
 model = get_model_instance_segmentation(num_classes)
 model.to(device)
@@ -292,9 +298,14 @@ num_epochs = 100
 for epoch in range(num_epochs):
     # train for one epoch, printing every 10 iterations
     train_metric_logger = train_one_epoch(model, optimizer, data_loader, device, epoch, print_freq=10)
-    print(dir(train_metric_logger))
+    content = f"epoch: {epoch:2d}; loss = {train_metric_logger.meters['loss']}; loss_mask = {train_metric_logger.meters['loss_mask']}"
+    print(content)
+    logger.info(content)
     # update the learning rate
-    lr_scheduler.step()
+    # lr_scheduler.step()
     # evaluate on the test dataset
     coco_evaluator, test_metric_logger = evaluate(model, data_loader_test, device=device)
-    torch.save(model.state_dict(), '/data/model_state/mask_rcnn_0311.pth')
+    content = f"epoch: {epoch:2d}; loss = {test_metric_logger.meters['model_time']}; loss_mask = {test_metric_logger.meters['evaluator_time']}"
+    print(content)
+    logger.info(content)
+    torch.save(model.state_dict(), '/root/code/model_state/mask_rcnn/mask_rcnn_0409_%d.pth' % epoch)
