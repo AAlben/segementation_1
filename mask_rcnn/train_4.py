@@ -1,16 +1,22 @@
+'''
+文件说明：
+ - 1）train.py - 官方多GPU训练版本
+ - 2）train_2.py - 单一牛场训练版本
+ - 3）train_3.py - 他人改写模型版本
+ - 4）train_4.py - 多牛场训练版本
+'''
+
 import os
 import cv2
 import json
 import numpy as np
 from tqdm import tqdm
 import albumentations as A
-from albumentations.pytorch import ToTensorV2
 from labelme import utils as labelme_utils
 
 import torch
-import torchvision
 from torch.utils.data import ConcatDataset
-from torchvision import transforms as TT
+import torchvision
 from torchvision.models.detection.faster_rcnn import FastRCNNPredictor
 from torchvision.models.detection.mask_rcnn import MaskRCNNPredictor
 
@@ -22,6 +28,9 @@ from engine import train_one_epoch, evaluate
 class Farm31Dataset(object):
 
     def __init__(self, transforms):
+        self.resize_transform = A.Compose([
+            A.SmallestMaxSize(max_size=384)
+        ])
         self.transforms = transforms
         self.imgs, self.masks = [], []
         self.load()
@@ -30,7 +39,6 @@ class Farm31Dataset(object):
         PATHS = ['/data/data/train_bmp',
                  '/data/data/train_jpg',
                  '/data/data/farm_24']
-
         for PATH in PATHS:
             for file in os.listdir(PATH):
                 if '.json' not in file:
@@ -79,6 +87,14 @@ class Farm31Dataset(object):
         lbl, _ = labelme_utils.shapes_to_label(img.shape,
                                                mask_shapes[0],
                                                label_d)
+
+        if 'farm_24' in img_path:
+            img_resize = self.resize_transform(image=img)
+            img = img_resize['image']
+            lbl = lbl.astype(np.uint8)
+            lbl_resize = self.resize_transform(image=lbl)
+            lbl = lbl_resize['image']
+
         nonzero_idx = np.nonzero(lbl)
         xmin = np.min(nonzero_idx[1])
         xmax = np.max(nonzero_idx[1])
@@ -221,12 +237,10 @@ class Farm24Dataset(object):
 def get_model_instance_segmentation(num_classes):
     # load an instance segmentation model pre-trained pre-trained on COCO
     model = torchvision.models.detection.maskrcnn_resnet50_fpn(pretrained=True)
-
     # get number of input features for the classifier
     in_features = model.roi_heads.box_predictor.cls_score.in_features
     # replace the pre-trained head with a new one
     model.roi_heads.box_predictor = FastRCNNPredictor(in_features, num_classes)
-
     # now get the number of input features for the mask classifier
     in_features_mask = model.roi_heads.mask_predictor.conv5_mask.in_channels
     hidden_layer = 256
@@ -244,47 +258,43 @@ def get_transform():
 
 
 dataset_31 = Farm31Dataset(get_transform())
-dataset_24 = Farm24Dataset(get_transform())
-datasets = ConcatDataset([dataset_31, dataset_24])
-indices = torch.randperm(len(datasets)).tolist()
-split_index = int(len(datasets) * 0.8)
-dataset = torch.utils.data.Subset(dataset_all, indices[:split_index])
-dataset_test = torch.utils.data.Subset(dataset_all, indices[split_index:])
+indices = torch.randperm(len(dataset_31)).tolist()
+split_index = int(len(dataset_31) * 0.8)
+dataset = torch.utils.data.Subset(dataset_31, indices[:split_index])
+dataset_test = torch.utils.data.Subset(dataset_31, indices[split_index:])
 data_loader = torch.utils.data.DataLoader(dataset,
                                           batch_size=3,
                                           shuffle=True,
                                           num_workers=4,
                                           collate_fn=utils.collate_fn)
-
 data_loader_test = torch.utils.data.DataLoader(dataset_test,
                                                batch_size=1,
                                                shuffle=False,
                                                num_workers=4,
                                                collate_fn=utils.collate_fn)
 
+
 model = get_model_instance_segmentation(num_classes)
 model.to(device)
 params = [p for p in model.parameters() if p.requires_grad]
-optimizer = torch.optim.SGD(params,
-                            lr=0.001,
-                            momentum=0.9,
-                            weight_decay=0.0005)
-lr_scheduler = torch.optim.lr_scheduler.StepLR(optimizer,
-                                               step_size=20,
-                                               gamma=0.1)
+# optimizer = torch.optim.SGD(params,
+#                             lr=0.001,
+#                             momentum=0.9,
+#                             weight_decay=0.0005)
+# lr_scheduler = torch.optim.lr_scheduler.StepLR(optimizer,
+#                                                step_size=20,
+#                                                gamma=0.1)
+optimizer = torch.optim.AdamW(model.parameters(), lr=1e-3, weight_decay=1e-3)
+lr_scheduler = torch.optim.lr_scheduler.ReduceLROnPlateau(optimizer, factor=0.3, patience=5)
 
 
-num_epochs = 60
-try:
-    for epoch in range(num_epochs):
-        # train for one epoch, printing every 10 iterations
-        train_one_epoch(model, optimizer, data_loader, device, epoch, print_freq=10)
-        # update the learning rate
-        lr_scheduler.step()
-        # evaluate on the test dataset
-        evaluate(model, data_loader_test, device=device)
-except KeyboardInterrupt:
+num_epochs = 100
+for epoch in range(num_epochs):
+    # train for one epoch, printing every 10 iterations
+    train_metric_logger = train_one_epoch(model, optimizer, data_loader, device, epoch, print_freq=10)
+    print(dir(train_metric_logger))
+    # update the learning rate
+    lr_scheduler.step()
+    # evaluate on the test dataset
+    coco_evaluator, test_metric_logger = evaluate(model, data_loader_test, device=device)
     torch.save(model.state_dict(), '/data/model_state/mask_rcnn_0311.pth')
-except Exception as e:
-    raise
-torch.save(model.state_dict(), '/data/model_state/mask_rcnn_0311.pth')
