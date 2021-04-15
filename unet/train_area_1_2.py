@@ -2,7 +2,7 @@ import warnings
 warnings.filterwarnings('ignore')
 
 from loguru import logger
-logger.add('mask_rcnn.log', rotation='100 MB')
+logger.add('unet_area_1.log', rotation='100 MB')
 
 import os
 import cv2
@@ -124,7 +124,21 @@ class Farm31Dataset(D.Dataset):
             if not shapes:
                 continue
 
-            self.imgs.append(img)
+            shapes = []
+            for mask in mask_json['shapes']:
+                if mask['label'] == 'whole':
+                    shapes.append(mask)
+                    break
+            if not shapes:
+                continue
+            lbl_whole, _ = utils.shapes_to_label(img.shape,
+                                                 shapes,
+                                                 {"_background_": 0, 'whole': 1})
+            where_whole = np.where(lbl_whole == 1)
+            img_whole = np.zeros(img.shape, dtype=np.uint8)
+            img_whole[where_whole[0], where_whole[1], :] = img[where_whole[0], where_whole[1], :]
+
+            self.imgs.append(img_whole)
             self.masks.append(lbl)
 
         PATH = '/root/code/model_data/farm_24'
@@ -153,13 +167,27 @@ class Farm31Dataset(D.Dataset):
             if not shapes:
                 continue
 
-            img_resize = self.resize_transform(image=img)
-            img = img_resize['image']
+            shapes = []
+            for mask in mask_json['shapes']:
+                if mask['label'] == 'whole':
+                    shapes.append(mask)
+                    break
+            if not shapes:
+                continue
+            lbl_whole, _ = utils.shapes_to_label(img.shape,
+                                                 shapes,
+                                                 {"_background_": 0, 'whole': 1})
+            where_whole = np.where(lbl_whole == 1)
+            img_whole = np.zeros(img.shape, dtype=np.uint8)
+            img_whole[where_whole[0], where_whole[1], :] = img[where_whole[0], where_whole[1], :]
+
+            img_resize = self.resize_transform(image=img_whole)
+            img_whole = img_resize['image']
             lbl = lbl.astype(np.uint8)
             lbl_resize = self.resize_transform(image=lbl)
             lbl = lbl_resize['image']
 
-            self.imgs.append(img)
+            self.imgs.append(img_whole)
             self.masks.append(lbl)
 
     def __getitem__(self, index):
@@ -287,7 +315,7 @@ loss_f = LovaszLossSoftmax()
 
 
 EPOCHES = 100
-BATCH_SIZE = 5
+BATCH_SIZE = 4
 NUM_WORKERS = 4
 
 ds_1 = Farm31Dataset()
@@ -316,7 +344,7 @@ lr_step = torch.optim.lr_scheduler.ReduceLROnPlateau(optimizer, factor=0.5, pati
 for epoch in tqdm(range(EPOCHES)):
     train_loss = train(model, train_loader, loss_f, optimizer)
     val_loss = validation(model, valid_loader, loss_f)
-    lr_step.step(val_loss)
+    lr_step.step(train_loss)
 
     content = f'epoch = {epoch}; train_loss = {train_loss}; val_loss = {val_loss}'
     print(content)
